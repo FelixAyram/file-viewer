@@ -1,3 +1,8 @@
+import { saveFile } from "./doc-store.js";
+import { renderPdf } from "./pdf-viewer.js";
+import { renderEbook } from "./ebook-viewer.js";
+import { showDocToolbar } from "./doc-toolbar.js";
+
 const supportedExtensions = {
   pdfjs: ["pdf"],
   djvujs: ["djvu"],
@@ -5,12 +10,48 @@ const supportedExtensions = {
   villainjs: ["cbz", "cbr", "rar", "zip"],
 };
 
+let loadingDepth = 0;
+
+export function showLoading(message = "Procesando documento…") {
+  const overlay = document.getElementById("loading-overlay");
+  if (!overlay) return;
+  if (loadingDepth === 0) {
+    overlay.classList.add("visible");
+    overlay.setAttribute("aria-busy", "true");
+  }
+  loadingDepth += 1;
+  setLoadingMessage(message);
+}
+
+export function setLoadingMessage(message) {
+  const label = document.getElementById("loading-overlay")?.querySelector(".loading-message");
+  if (label) label.textContent = message;
+}
+
+export function hideLoading() {
+  if (loadingDepth <= 0) return;
+  loadingDepth -= 1;
+  if (loadingDepth > 0) return;
+  const overlay = document.getElementById("loading-overlay");
+  if (!overlay) return;
+  overlay.classList.remove("visible");
+  overlay.setAttribute("aria-busy", "false");
+}
+
+async function waitForNextPaint() {
+  await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+}
+
 function parseUrl(url) {
   try {
     return new URL(url).pathname;
   } catch {
     return url;
   }
+}
+
+function extFromName(name) {
+  return name?.split(".").pop()?.toLowerCase() || "";
 }
 
 function displayError(error) {
@@ -21,21 +62,58 @@ function displayError(error) {
   console.error("Viewer error:", error);
 }
 
-function attachFrameListener() {
-  const iframe = document.querySelector(".viewer-frame");
-  if (!iframe?.contentWindow) return;
-  const { contentWindow } = iframe;
-  contentWindow.addEventListener("error", (e) => displayError(e.error?.message || e.message));
-  contentWindow.addEventListener("unhandledrejection", (e) => displayError(e.reason?.message || e.reason));
-  contentWindow.EventTarget.prototype.addEventListener = new Proxy(
-    contentWindow.EventTarget.prototype.addEventListener,
-    {
-      apply(target, that, args) {
-        if (args[0] === "drop") return;
-        return Reflect.apply(target, that, args);
-      },
-    }
-  );
+function clearError() {
+  document.getElementById("error-popup")?.classList.remove("visible");
+}
+
+function prepareViewer() {
+  document.getElementById("drop-area")?.remove();
+  showDocToolbar();
+  return document.getElementById("viewer-container");
+}
+
+export function setViewerHash({ doc, file, type, name }) {
+  const params = new URLSearchParams();
+  if (doc) params.set("doc", doc);
+  if (file) params.set("file", file);
+  if (type) params.set("type", type);
+  if (name) params.set("name", name);
+  location.hash = params.toString();
+}
+
+export function parseViewerHash() {
+  const raw = location.hash.slice(1);
+  if (!raw) return null;
+  const params = new URLSearchParams(raw);
+  return {
+    doc: params.get("doc"),
+    file: params.get("file"),
+    type: params.get("type"),
+    name: params.get("name"),
+  };
+}
+
+async function toFile(source, name, type) {
+  if (source instanceof File) return source;
+  const blob =
+    source instanceof Blob
+      ? source
+      : await (async () => {
+          try {
+            const res = await fetch(source);
+            if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+            return res.blob();
+          } catch (err) {
+            if (err?.message === "Failed to fetch") {
+              throw new Error(
+                "No se pudo descargar el archivo remoto. Subilo con arrastrar y soltar."
+              );
+            }
+            throw err;
+          }
+        })();
+  if (!blob) throw new Error("No se pudo leer el archivo");
+  return new File([blob], name || "document", { type: type || blob.type });
 }
 
 function loadWithVillain(file) {
@@ -49,13 +127,15 @@ function loadWithVillain(file) {
     },
     workerUrl: "./vendor/libarchive/worker-bundle.js",
   };
-  document.getElementById("viewer-container").innerHTML = "";
-  const root = ReactDOM.createRoot(document.getElementById("viewer-container"));
+  const container = prepareViewer();
+  container.innerHTML = "";
+  const root = ReactDOM.createRoot(container);
   root.render(React.createElement(Villain, props));
 }
 
-async function loadZip(fileUrl) {
-  const blob = await (await fetch(fileUrl)).blob();
+async function loadZip(source) {
+  setLoadingMessage("Leyendo archivo comprimido…");
+  const blob = source instanceof Blob ? source : await (await fetch(source)).blob();
   const reader = new zip.ZipReader(new zip.BlobReader(blob));
   let entries = await reader.getEntries();
   entries.sort((a, b) => a.filename.localeCompare(b.filename));
@@ -64,15 +144,19 @@ async function loadZip(fileUrl) {
     return;
   }
   if (entries.some((e) => !e.filename.endsWith(".txt"))) {
+    setLoadingMessage("Preparando visor de cómics…");
     loadWithVillain(blob);
+    await waitForNextPaint();
     return;
   }
 
-  const container = document.getElementById("viewer-container");
+  setLoadingMessage("Extrayendo texto…");
+  const container = prepareViewer();
   container.innerHTML = "";
   const wrap = document.createElement("div");
   wrap.className = "zip-text-view";
-  wrap.style.cssText = "width:100%;height:100%;overflow:auto;padding:2rem;color:#ddd;background:#111;";
+  wrap.style.cssText =
+    "width:100%;height:100%;overflow:auto;padding:2rem;color:#ddd;background:#111;";
   container.appendChild(wrap);
 
   for (const entry of entries) {
@@ -86,57 +170,6 @@ async function loadZip(fileUrl) {
   }
 }
 
-export async function loadViewerByUrl(fileUrl, fileType) {
-  if (!fileType) {
-    const parsedUrl = parseUrl(encodeURI(fileUrl));
-    fileType = parsedUrl.split(".").pop()?.toLowerCase();
-  }
-
-  const viewerContainer = document.getElementById("viewer-container");
-  const dropArea = document.getElementById("drop-area");
-  if (dropArea) dropArea.remove();
-
-  function replaceViewerWithFrame(src, id) {
-    const iframe = document.createElement("iframe");
-    if (id) iframe.id = id;
-    iframe.src = src;
-    iframe.title = "webviewer";
-    iframe.setAttribute("frameborder", "0");
-    iframe.className = "viewer-frame w-full h-full";
-    viewerContainer.replaceChildren(iframe);
-    attachFrameListener();
-  }
-
-  const encodedFileUrl = encodeURIComponent(fileUrl);
-  location.hash = `file=${encodeURIComponent(fileUrl)}&type=${fileType}`;
-
-  if (supportedExtensions.pdfjs.includes(fileType)) {
-    // PDF.js viewer (Mozilla CDN) — ink tools built-in; our overlay adds smooth strokes on top
-    replaceViewerWithFrame(
-      `https://mozilla.github.io/pdf.js/web/viewer.html?file=${encodedFileUrl}`
-    );
-  } else if (supportedExtensions.djvujs.includes(fileType)) {
-    viewerContainer.innerHTML = "";
-    const viewer = new DjVu.Viewer();
-    viewer.render(viewerContainer);
-    viewer.loadDocumentByUrl(fileUrl);
-  } else if (supportedExtensions.foliatejs.includes(fileType)) {
-    // Foliate reader via Anna's Archive CDN (read-only embed)
-    replaceViewerWithFrame(
-      `https://annas-archive.gl/foliatejs/reader.html?url=${encodedFileUrl}`,
-      "foliate-iframe"
-    );
-  } else if (supportedExtensions.villainjs.includes(fileType)) {
-    if (fileType === "zip") {
-      await loadZip(fileUrl);
-      return;
-    }
-    loadWithVillain(fileUrl);
-  } else {
-    displayError(`File type not supported: .${fileType}`);
-  }
-}
-
 function getBuffer(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -146,37 +179,87 @@ function getBuffer(file) {
   });
 }
 
-async function loadDjvuByFile(file) {
-  const viewerContainer = document.getElementById("viewer-container");
-  document.getElementById("drop-area")?.remove();
-  viewerContainer.innerHTML = "";
+async function loadDjvu(source) {
+  const container = prepareViewer();
+  container.innerHTML = "";
   const viewer = new DjVu.Viewer();
-  const buffer = await getBuffer(file);
-  viewer.render(viewerContainer);
-  viewer.loadDocument(buffer);
+  const buffer =
+    source instanceof ArrayBuffer
+      ? source
+      : await getBuffer(await toFile(source, "file.djvu"));
+  setLoadingMessage("Renderizando DJVU…");
+  viewer.render(container);
+  await viewer.loadDocument(buffer);
 }
 
-window.fileInfoForMonkeyPatchedFetchFile = {};
-window.fetchFile = async (url) => {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-  const fileInfo = window.fileInfoForMonkeyPatchedFetchFile;
-  if (url.startsWith("blob:") && "name" in fileInfo && "type" in fileInfo) {
-    return new File([await res.blob()], fileInfo.name, { type: fileInfo.type });
+export async function loadDocument(source, fileType, { name } = {}) {
+  showLoading("Preparando visor…");
+  clearError();
+  try {
+    if (!fileType && name) fileType = extFromName(name);
+    if (!fileType && typeof source === "string") {
+      fileType = parseUrl(source).split(".").pop()?.toLowerCase();
+    }
+
+    document.body.classList.toggle(
+      "pdf-viewer-active",
+      supportedExtensions.pdfjs.includes(fileType)
+    );
+
+    const file =
+      source instanceof File || source instanceof ArrayBuffer
+        ? source
+        : await toFile(source, name || `file.${fileType}`);
+
+    if (supportedExtensions.pdfjs.includes(fileType)) {
+      setLoadingMessage("Cargando PDF…");
+      await renderPdf(prepareViewer(), file, { onMessage: setLoadingMessage });
+    } else if (supportedExtensions.djvujs.includes(fileType)) {
+      setLoadingMessage("Cargando DJVU…");
+      await loadDjvu(file);
+    } else if (supportedExtensions.foliatejs.includes(fileType)) {
+      setLoadingMessage("Cargando ebook…");
+      const ebookFile = file instanceof File ? file : await toFile(file, name || `file.${fileType}`);
+      await renderEbook(prepareViewer(), ebookFile);
+    } else if (supportedExtensions.villainjs.includes(fileType)) {
+      if (fileType === "zip") {
+        await loadZip(file);
+        return;
+      }
+      setLoadingMessage("Preparando visor de cómics…");
+      loadWithVillain(file);
+      await waitForNextPaint();
+    } else {
+      displayError(`File type not supported: .${fileType}`);
+    }
+  } catch (error) {
+    displayError(error);
+    throw error;
+  } finally {
+    hideLoading();
   }
-  return new File([await res.blob()], new URL(res.url).pathname);
-};
+}
+
+export async function loadViewerByUrl(fileUrl, fileType) {
+  if (!fileType) {
+    fileType = parseUrl(encodeURI(fileUrl)).split(".").pop()?.toLowerCase();
+  }
+  setViewerHash({ file: fileUrl, type: fileType });
+  await loadDocument(fileUrl, fileType, {
+    name: parseUrl(fileUrl).split("/").pop(),
+  });
+}
 
 export async function handleFileUpload(file, drawLayer) {
-  const fileType = file.name.split(".").pop()?.toLowerCase();
-  if (supportedExtensions.djvujs.includes(fileType)) {
-    await loadDjvuByFile(file);
-  } else {
-    const fileUrl = URL.createObjectURL(file);
-    window.fileInfoForMonkeyPatchedFetchFile = { name: file.name, type: file.type };
-    await loadViewerByUrl(fileUrl, fileType);
+  try {
+    const fileType = extFromName(file.name);
+    const docId = await saveFile(file);
+    setViewerHash({ doc: docId, type: fileType, name: file.name });
+    await loadDocument(file, fileType, { name: file.name });
+    drawLayer?.loadPersisted();
+  } catch (error) {
+    displayError(error);
   }
-  drawLayer?.loadPersisted();
 }
 
 export function initDropZone(drawLayer) {
@@ -206,7 +289,13 @@ export function initDropZone(drawLayer) {
   });
 }
 
-window.addEventListener("error", (e) => displayError(e.error?.message || e.message));
-window.addEventListener("unhandledrejection", (e) => displayError(e.reason?.message || e.reason));
+window.addEventListener("error", (e) => {
+  hideLoading();
+  displayError(e.error?.message || e.message);
+});
+window.addEventListener("unhandledrejection", (e) => {
+  hideLoading();
+  displayError(e.reason?.message || e.reason);
+});
 
 export { displayError, supportedExtensions };

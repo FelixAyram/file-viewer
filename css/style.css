@@ -80,7 +80,7 @@ html, body {
   position: fixed;
   inset: 0;
   pointer-events: none;
-  z-index: 50;
+  z-index: 200;
 }
 
 #draw-overlay.active {
@@ -94,76 +94,80 @@ html, body {
   display: block;
 }
 
-#draw-toolbar {
+/* Doc toolbar (PDF.js editorInk pattern for non-PDF) */
+.doc-toolbar {
   position: fixed;
-  top: 12px;
-  right: 12px;
-  z-index: 100;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 120;
+  background: var(--toolbar-bg-color, #f9f9fa);
+  border-bottom: 1px solid var(--toolbar-border-color, #d7d7db);
+}
+
+.doc-toolbar.hidden {
+  display: none;
+}
+
+.doc-toolbar-outer {
+  max-width: 100%;
+  padding: 0 6px;
+}
+
+.doc-toolbar .toolbar {
+  position: relative;
+  height: 32px;
+}
+
+.doc-toolbar #toolbarViewerRight {
+  position: absolute;
+  right: 0;
+  top: 0;
+  height: 100%;
   display: flex;
+  align-items: center;
+}
+
+.doc-extra-actions {
+  display: flex;
+  gap: 6px;
   flex-wrap: wrap;
-  gap: 6px;
   align-items: center;
-  padding: 8px 10px;
-  background: rgba(30, 30, 30, 0.92);
-  border: 1px solid rgba(255,255,255,0.12);
-  border-radius: 10px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
-  backdrop-filter: blur(8px);
-  max-width: calc(100vw - 24px);
+  margin-top: 8px;
 }
 
-#draw-toolbar button,
-#draw-toolbar label.toggle {
+.doc-extra-actions .toolbarButton {
+  font-size: 12px;
+}
+
+body.has-doc-toolbar #viewer-container {
+  height: calc(100% - 32px);
+  margin-top: 32px;
+}
+
+body.has-doc-toolbar.pdf-viewer-active #viewer-container {
+  height: calc(100% - 32px);
+  margin-top: 32px;
+}
+
+.editorParamsHint {
+  margin: 0 0 10px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--main-color, #5b5b66);
+  max-width: 220px;
+}
+
+.pdfjs-viewer-frame {
+  width: 100%;
+  height: 100%;
   border: 0;
-  border-radius: 6px;
-  padding: 6px 10px;
-  font-size: 13px;
-  cursor: pointer;
-  background: rgba(255,255,255,0.08);
-  color: #eee;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  user-select: none;
+  display: block;
 }
 
-#draw-toolbar button:hover,
-#draw-toolbar label.toggle:hover {
-  background: rgba(255,255,255,0.14);
-}
-
-#draw-toolbar button.active {
-  background: #3b82f6;
-  color: #fff;
-}
-
-#draw-toolbar label.toggle input { display: none; }
-
-#draw-toolbar label.toggle.on {
-  background: #16a34a;
-  color: #fff;
-}
-
-#draw-toolbar input[type="color"] {
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: 2px solid rgba(255,255,255,0.2);
-  border-radius: 4px;
-  cursor: pointer;
-  background: transparent;
-}
-
-#draw-toolbar input[type="range"] {
-  width: 72px;
-  accent-color: #3b82f6;
-}
-
-.toolbar-sep {
-  width: 1px;
-  height: 24px;
-  background: rgba(255,255,255,0.15);
-  margin: 0 2px;
+.pdf-shell {
+  width: 100%;
+  height: 100%;
 }
 
 #shape-preview-hint {
@@ -184,3 +188,82 @@ html, body {
 #shape-preview-hint.visible { display: block; }
 
 .villain { min-height: 100vh !important; }
+
+/* Loading overlay */
+#loading-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 10, 10, 0.82);
+  backdrop-filter: blur(4px);
+}
+
+#loading-overlay.visible {
+  display: flex;
+}
+
+#loading-overlay .loading-card {
+  width: min(22rem, calc(100vw - 2rem));
+  padding: 1.25rem 1.5rem 1.35rem;
+  border-radius: 12px;
+  background: #1e1e1e;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+
+#loading-overlay .loading-message {
+  margin: 0 0 0.85rem;
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: #f3f4f6;
+}
+
+#loading-overlay .loading-hint {
+  margin: 0.75rem 0 0;
+  font-size: 0.8rem;
+  color: #9ca3af;
+}
+
+#loading-overlay .loading-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+#loading-overlay .loading-bar-fill {
+  height: 100%;
+  width: 35%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #3b82f6, #60a5fa, #3b82f6);
+  background-size: 200% 100%;
+  animation: loading-bar-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes loading-bar-slide {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(320%); }
+}
+
+/* Local PDF / ebook viewers */
+#viewer-container:has(.ebook-shell) {
+  display: block;
+  align-items: stretch;
+}
+
+.ebook-shell {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #1a1a1a;
+}
+
+.foliate-reader {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+}
