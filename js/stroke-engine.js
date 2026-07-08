@@ -193,6 +193,14 @@ export function recognizeShape(points) {
   return null;
 }
 
+/** Detect only line or circle from a stroke. */
+export function recognizeLineAndCircle(points) {
+  const shape = recognizeShape(points);
+  if (!shape) return null;
+  if (shape.type === "line" || shape.type === "circle") return shape;
+  return null;
+}
+
 /** Detect only circle or rectangle (closed strokes). */
 export function recognizeCircleOrRect(points) {
   const shape = recognizeShape(points);

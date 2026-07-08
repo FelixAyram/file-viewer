@@ -199,8 +199,6 @@ export async function loadDocument(source, fileType, { name } = {}) {
       fileType = parseUrl(source).split(".").pop()?.toLowerCase();
     }
 
-    document.body.classList.remove("pdf-viewer-active");
-
     const file =
       source instanceof File || source instanceof ArrayBuffer
         ? source
@@ -245,19 +243,18 @@ export async function loadViewerByUrl(fileUrl, fileType) {
   });
 }
 
-export async function handleFileUpload(file, drawLayer) {
+export async function handleFileUpload(file) {
   try {
     const fileType = extFromName(file.name);
     const docId = await saveFile(file);
     setViewerHash({ doc: docId, type: fileType, name: file.name });
     await loadDocument(file, fileType, { name: file.name });
-    drawLayer?.loadPersisted();
   } catch (error) {
     displayError(error);
   }
 }
 
-export function initDropZone(drawLayer) {
+export function initDropZone() {
   const dropArea = document.getElementById("drop-area");
   const fileInput = document.getElementById("file-upload");
 
@@ -274,12 +271,12 @@ export function initDropZone(drawLayer) {
       displayError("Please upload only one file.");
       return;
     }
-    if (files.length > 0) await handleFileUpload(files[0], drawLayer);
+    if (files.length > 0) await handleFileUpload(files[0]);
   });
   dropArea.addEventListener("click", () => fileInput.click());
   fileInput.addEventListener("change", async () => {
     if (fileInput.files.length > 0) {
-      await handleFileUpload(fileInput.files[0], drawLayer);
+      await handleFileUpload(fileInput.files[0]);
     }
   });
 }

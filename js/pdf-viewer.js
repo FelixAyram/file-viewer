@@ -6,17 +6,15 @@ async function toBlob(source) {
   return res.blob();
 }
 
-function hidePdfJsEditors(iframe) {
+function injectInkShapeHook(iframe) {
   try {
     const doc = iframe.contentDocument;
-    if (!doc) return;
-    const style = doc.createElement("style");
-    style.textContent = `
-      #editorModeButtons,
-      #editorModeSeparator,
-      #editorUndoBar { display: none !important; }
-    `;
-    doc.head.appendChild(style);
+    if (!doc || doc.getElementById("ink-shape-hook")) return;
+    const script = doc.createElement("script");
+    script.id = "ink-shape-hook";
+    script.type = "module";
+    script.src = new URL("../../../js/pdf-ink-shape-hook.js", iframe.src).href;
+    doc.head.appendChild(script);
   } catch (_) {}
 }
 
@@ -32,8 +30,9 @@ export async function renderPdf(container, source, { onMessage } = {}) {
   }
 
   const iframe = document.createElement("iframe");
-  iframe.className = "pdfjs-viewer-frame";
+  iframe.className = "pdfjs-viewer-frame viewer-frame";
   iframe.title = "PDF";
+  iframe.setAttribute("frameborder", "0");
   iframe.src = `./vendor/pdfjs/web/viewer.html?file=${encodeURIComponent(fileUrl)}`;
   container.appendChild(iframe);
 
@@ -45,8 +44,8 @@ export async function renderPdf(container, source, { onMessage } = {}) {
     });
   });
 
-  hidePdfJsEditors(iframe);
-  iframe.addEventListener("load", () => hidePdfJsEditors(iframe));
+  injectInkShapeHook(iframe);
+  iframe.addEventListener("load", () => injectInkShapeHook(iframe));
 
   return iframe;
 }

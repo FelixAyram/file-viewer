@@ -1,27 +1,7 @@
-import { DrawLayer } from "./draw-layer.js";
 import { initDropZone, loadViewerByUrl, loadDocument, parseViewerHash } from "./viewer.js";
 import { loadFile } from "./doc-store.js";
 
-const drawLayer = new DrawLayer(
-  document.getElementById("draw-overlay"),
-  document.getElementById("draw-toolbar"),
-  document.getElementById("shape-preview-hint")
-);
-
-initDropZone(drawLayer);
-
-document.addEventListener("keydown", (e) => {
-  if (e.target.matches("input, textarea")) return;
-  if (e.key === "d" || e.key === "D") drawLayer.setEnabled(!drawLayer.enabled);
-  if (e.ctrlKey && e.key === "z") {
-    e.preventDefault();
-    drawLayer.undo();
-  }
-  if (e.ctrlKey && e.key === "y") {
-    e.preventDefault();
-    drawLayer.redo();
-  }
-});
+initDropZone();
 
 async function restoreFromLocation() {
   const params = new URLSearchParams(location.search);
@@ -49,6 +29,4 @@ async function restoreFromLocation() {
   return false;
 }
 
-restoreFromLocation()
-  .then(() => drawLayer.loadPersisted())
-  .catch(() => drawLayer.loadPersisted());
+restoreFromLocation().catch(() => {});
