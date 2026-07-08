@@ -13,9 +13,12 @@ function injectInkShapeHook(iframe) {
     const script = doc.createElement("script");
     script.id = "ink-shape-hook";
     script.type = "module";
-    script.src = new URL("../../../js/pdf-ink-shape-hook.js", iframe.src).href;
+    const base = new URL(".", iframe.src);
+    script.src = new URL("../../../js/pdf-ink-shape-hook.js", base).href;
     doc.head.appendChild(script);
-  } catch (_) {}
+  } catch (err) {
+    console.warn("shape-assist inject failed", err);
+  }
 }
 
 export async function renderPdf(container, source, { onMessage } = {}) {
@@ -45,7 +48,10 @@ export async function renderPdf(container, source, { onMessage } = {}) {
   });
 
   injectInkShapeHook(iframe);
-  iframe.addEventListener("load", () => injectInkShapeHook(iframe));
+  try {
+    await iframe.contentWindow?.PDFViewerApplication?.initializedPromise;
+    injectInkShapeHook(iframe);
+  } catch (_) {}
 
   return iframe;
 }
