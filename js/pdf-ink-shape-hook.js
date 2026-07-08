@@ -1,7 +1,6 @@
 /**
- * Shape-assist layer for PDF.js Draw tool (editorInk).
- * Intercepts ink mode and draws on a scroll-synced canvas with line/circle snap.
- * Approach: Excalidraw-style RDP + overlay (tldraw/Nebo pattern).
+ * Shape-assist for PDF.js Draw (editorInk).
+ * Captures pointer events in ink mode (tldraw/Excalidraw pattern) and snaps strokes to line/circle.
  */
 import {
   recognizeLineAndCircle,
@@ -14,12 +13,13 @@ const STORAGE_KEY = "pdf-shape-assist-strokes";
 
 function waitForApp() {
   return new Promise((resolve) => {
-    if (window.PDFViewerApplication?.initialized) {
+    const ready = () => window.PDFViewerApplication?.initialized;
+    if (ready()) {
       resolve(window.PDFViewerApplication);
       return;
     }
     const timer = setInterval(() => {
-      if (window.PDFViewerApplication?.initialized) {
+      if (ready()) {
         clearInterval(timer);
         resolve(window.PDFViewerApplication);
       }
@@ -40,7 +40,6 @@ function injectStyles() {
       z-index: 100001;
       pointer-events: none;
     }
-    .shape-assist-canvas.active { pointer-events: auto; cursor: crosshair; }
     .shape-assist-hint {
       position: fixed;
       bottom: 16px;
@@ -54,10 +53,14 @@ function injectStyles() {
       font: 13px system-ui, sans-serif;
       display: none;
       pointer-events: none;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.2);
     }
     .shape-assist-hint.visible { display: block; }
-    body.shape-assist-on .annotationEditorLayer.inkEditing {
+    body.shape-assist-on .annotationEditorLayer {
       pointer-events: none !important;
+    }
+    body.shape-assist-on #viewerContainer {
+      cursor: crosshair;
     }
   `;
   document.head.appendChild(style);
@@ -67,12 +70,27 @@ function getInkStyle() {
   const color = document.getElementById("editorInkColor")?.value || "#000000";
   const thickness = Number(document.getElementById("editorInkThickness")?.value || 1);
   const opacity = Number(document.getElementById("editorInkOpacity")?.value || 1);
-  return { color, width: Math.max(1, thickness * 2.2), opacity };
+  return { color, width: Math.max(1.5, thickness * 2.4), opacity };
+}
+
+function isInkMode(app) {
+  const btn = document.getElementById("editorInkButton");
+  if (btn?.classList.contains("toggled")) return true;
+  try {
+    return app.pdfViewer?.annotationEditorMode === INK_MODE;
+  } catch (_) {
+    return false;
+  }
+}
+
+function distance(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
 class ShapeAssistLayer {
-  constructor(container) {
+  constructor(container, app) {
     this.container = container;
+    this.app = app;
     this.canvas = document.createElement("canvas");
     this.canvas.className = "shape-assist-canvas";
     this.hint = document.createElement("div");
@@ -88,20 +106,42 @@ class ShapeAssistLayer {
     this.preview = null;
     this.holdTimer = null;
     this.lastMove = { x: 0, y: 0 };
+    this._docW = 0;
+    this._docH = 0;
+    this._onCaptureDown = this._onCaptureDown.bind(this);
+    this._onCaptureMove = this._onCaptureMove.bind(this);
+    this._onCaptureUp = this._onCaptureUp.bind(this);
     this._bind();
     this._resize();
     this._load();
   }
 
   setEnabled(on) {
+    if (this.enabled === on) return;
     this.enabled = on;
-    this.canvas.classList.toggle("active", on);
     document.body.classList.toggle("shape-assist-on", on);
-    if (!on) {
+    if (on) {
+      window.addEventListener("pointerdown", this._onCaptureDown, true);
+      window.addEventListener("pointermove", this._onCaptureMove, true);
+      window.addEventListener("pointerup", this._onCaptureUp, true);
+      window.addEventListener("pointercancel", this._onCaptureUp, true);
+    } else {
+      window.removeEventListener("pointerdown", this._onCaptureDown, true);
+      window.removeEventListener("pointermove", this._onCaptureMove, true);
+      window.removeEventListener("pointerup", this._onCaptureUp, true);
+      window.removeEventListener("pointercancel", this._onCaptureUp, true);
       this._cancelHold();
       this.preview = null;
+      this.drawing = false;
       this.hint.classList.remove("visible");
     }
+  }
+
+  _inViewer(e) {
+    const vc = this.container;
+    if (!vc?.contains(e.target)) return false;
+    if (e.target.closest?.("#toolbarContainer, #secondaryToolbar, .editorParamsToolbar")) return false;
+    return true;
   }
 
   _docPoint(e) {
@@ -114,73 +154,92 @@ class ShapeAssistLayer {
 
   _resize() {
     const dpr = window.devicePixelRatio || 1;
-    const w = Math.max(this.container.scrollWidth, this.container.clientWidth);
-    const h = Math.max(this.container.scrollHeight, this.container.clientHeight);
-    this.canvas.width = w * dpr;
-    this.canvas.height = h * dpr;
+    const viewer = document.getElementById("viewer");
+    const w = Math.max(
+      this.container.scrollWidth,
+      this.container.clientWidth,
+      viewer?.scrollWidth || 0,
+    );
+    const h = Math.max(
+      this.container.scrollHeight,
+      this.container.clientHeight,
+      viewer?.scrollHeight || 0,
+    );
+    this._docW = w;
+    this._docH = h;
+    this.canvas.width = Math.ceil(w * dpr);
+    this.canvas.height = Math.ceil(h * dpr);
     this.canvas.style.width = `${w}px`;
     this.canvas.style.height = `${h}px`;
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.container.appendChild(this.canvas);
     this.redraw();
   }
 
   _bind() {
-    const onDown = (e) => {
-      if (!this.enabled || e.button !== 0) return;
-      e.preventDefault();
-      e.stopPropagation();
-      this.canvas.setPointerCapture(e.pointerId);
-      this.drawing = true;
-      this.raw = [this._docPoint(e)];
-      this.preview = null;
-      this.hint.classList.remove("visible");
-      this._cancelHold();
-    };
-
-    const onMove = (e) => {
-      if (!this.drawing) return;
-      const p = this._docPoint(e);
-      this.raw.push(p);
-      this.lastMove = p;
-      this._cancelHold();
-      if (this.raw.length > 10) this._scheduleHold();
-      this._drawLive();
-    };
-
-    const onUp = (e) => {
-      if (!this.drawing) return;
-      this._cancelHold();
-      this.drawing = false;
-      try {
-        this.canvas.releasePointerCapture(e.pointerId);
-      } catch (_) {}
-
-      const pts = this.raw.map((p) => ({ ...p }));
-      if (pts.length < 2) {
-        this.raw = [];
-        this.preview = null;
-        this.redraw();
-        return;
-      }
-
-      const shape = this.preview ?? recognizeLineAndCircle(pts);
-      const style = getInkStyle();
-      const points = shape ? shapeToPoints(shape) : smoothStroke(pts, { streamline: 0.5 });
-
-      this.strokes.push({ points, ...style });
-      this.raw = [];
-      this.preview = null;
-      this.hint.classList.remove("visible");
-      this.redraw();
-      this._save();
-    };
-
-    this.canvas.addEventListener("pointerdown", onDown);
-    this.canvas.addEventListener("pointermove", onMove);
-    this.canvas.addEventListener("pointerup", onUp);
-    this.canvas.addEventListener("pointercancel", onUp);
     this.container.addEventListener("scroll", () => this._resize(), { passive: true });
     window.addEventListener("resize", () => this._resize());
+
+    const viewer = document.getElementById("viewer");
+    if (viewer && "ResizeObserver" in window) {
+      new ResizeObserver(() => this._resize()).observe(viewer);
+    }
+
+    const bus = this.app.eventBus;
+    for (const ev of ["pagesloaded", "scalechanging", "scalechanged", "pagerendered"]) {
+      bus.on(ev, () => this._resize());
+    }
+  }
+
+  _onCaptureDown(e) {
+    if (!this.enabled || e.button !== 0 || !this._inViewer(e)) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    this.drawing = true;
+    this.raw = [this._docPoint(e)];
+    this.preview = null;
+    this.hint.classList.remove("visible");
+    this._cancelHold();
+    this._drawLive();
+  }
+
+  _onCaptureMove(e) {
+    if (!this.drawing) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    const p = this._docPoint(e);
+    this.raw.push(p);
+    this.lastMove = p;
+    this._cancelHold();
+    if (this.raw.length > 8) this._scheduleHold();
+    this._drawLive();
+  }
+
+  _onCaptureUp(e) {
+    if (!this.drawing) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    this._cancelHold();
+    this.drawing = false;
+
+    const pts = this.raw.map((p) => ({ ...p }));
+    if (pts.length < 2) {
+      this.raw = [];
+      this.preview = null;
+      this.redraw();
+      return;
+    }
+
+    const shape = this.preview ?? recognizeLineAndCircle(pts);
+    const style = getInkStyle();
+    const points = shape ? shapeToPoints(shape) : smoothStroke(pts, { streamline: 0.48 });
+
+    this.strokes.push({ points, ...style });
+    this.raw = [];
+    this.preview = null;
+    this.hint.classList.remove("visible");
+    this.redraw();
+    this._save();
   }
 
   _scheduleHold() {
@@ -188,8 +247,8 @@ class ShapeAssistLayer {
     const n = this.raw.length;
     this.holdTimer = setTimeout(() => {
       if (!this.drawing || this.raw.length !== n) return;
-      const tail = this.raw.slice(-4);
-      const still = tail.every((p) => distance(p, this.lastMove) < 5);
+      const tail = this.raw.slice(-5);
+      const still = tail.every((p) => distance(p, this.lastMove) < 6);
       if (!still) return;
       const shape = recognizeLineAndCircle(this.raw);
       if (shape) {
@@ -201,7 +260,7 @@ class ShapeAssistLayer {
         this.hint.classList.add("visible");
         this._drawLive();
       }
-    }, 420);
+    }, 380);
   }
 
   _cancelHold() {
@@ -220,13 +279,13 @@ class ShapeAssistLayer {
     ctx.lineJoin = "round";
     ctx.strokeStyle = style.color;
     ctx.lineWidth = style.width;
-    ctx.globalAlpha = this.preview ? style.opacity * 0.55 : style.opacity * 0.85;
+    ctx.globalAlpha = this.preview ? style.opacity * 0.55 : style.opacity * 0.88;
 
     let points;
     if (this.preview) {
       points = shapeToPoints(this.preview);
     } else {
-      points = this.raw.length > 2 ? smoothStroke(this.raw, { streamline: 0.5 }) : this.raw;
+      points = this.raw.length > 2 ? smoothStroke(this.raw, { streamline: 0.48 }) : this.raw;
     }
     this._stroke(ctx, points);
     ctx.restore();
@@ -244,7 +303,11 @@ class ShapeAssistLayer {
 
   redraw() {
     const ctx = this.ctx;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    const dpr = window.devicePixelRatio || 1;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     for (const s of this.strokes) {
       ctx.save();
       ctx.lineCap = "round";
@@ -255,6 +318,7 @@ class ShapeAssistLayer {
       this._stroke(ctx, s.points);
       ctx.restore();
     }
+    ctx.restore();
   }
 
   _save() {
@@ -271,20 +335,6 @@ class ShapeAssistLayer {
   }
 }
 
-function distance(a, b) {
-  return Math.hypot(a.x - b.x, a.y - b.y);
-}
-
-function isInkMode(app) {
-  const btn = document.getElementById("editorInkButton");
-  if (btn?.classList.contains("toggled")) return true;
-  try {
-    return app.pdfViewer?.annotationEditorMode === INK_MODE;
-  } catch (_) {
-    return false;
-  }
-}
-
 async function main() {
   injectStyles();
   const app = await waitForApp();
@@ -293,14 +343,15 @@ async function main() {
   const container = document.getElementById("viewerContainer");
   if (!container) return;
 
-  const layer = new ShapeAssistLayer(container);
+  const layer = new ShapeAssistLayer(container, app);
 
   const sync = () => layer.setEnabled(isInkMode(app));
   app.eventBus.on("annotationeditormodechanged", sync);
   document.getElementById("editorInkButton")?.addEventListener("click", () => {
     setTimeout(sync, 0);
+    setTimeout(sync, 120);
   });
-  setInterval(sync, 350);
+  setInterval(sync, 400);
   sync();
 }
 

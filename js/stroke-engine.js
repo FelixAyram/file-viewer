@@ -1,11 +1,10 @@
 /**
- * Shape recognition inspired by Excalidraw (RDP simplification) and $1 recognizer patterns.
+ * Shape recognition: geometric heuristics + $1 Unistroke (Excalidraw / Wobbrock).
+ * Supports line and circle snap from a single freehand stroke.
  */
 
 export function distance(a, b) {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  return Math.hypot(dx, dy);
+  return Math.hypot(b.x - a.x, b.y - a.y);
 }
 
 function perpendicularDistance(p, a, b) {
@@ -15,7 +14,6 @@ function perpendicularDistance(p, a, b) {
   return Math.abs(dy * p.x - dx * p.y + b.x * a.y - b.y * a.x) / len;
 }
 
-/** Ramer–Douglas–Peucker — used by Excalidraw shape-assist prototypes */
 export function rdp(points, epsilon) {
   if (points.length <= 2) return points.slice();
   let maxDist = 0;
@@ -36,7 +34,7 @@ export function rdp(points, epsilon) {
   return [points[0], points[last]];
 }
 
-export function filterPoints(points, minDist = 2) {
+export function filterPoints(points, minDist = 1.5) {
   if (points.length < 2) return points.slice();
   const out = [points[0]];
   for (let i = 1; i < points.length; i += 1) {
@@ -81,28 +79,167 @@ function lineError(points, a, b) {
   const len = distance(a, b) || 1;
   let err = 0;
   for (const p of points) {
-    const cross = Math.abs((b.y - a.y) * p.x - (b.x - a.x) * p.y + b.x * a.y - b.y * a.x) / len;
-    err += cross;
+    err += Math.abs((b.y - a.y) * p.x - (b.x - a.x) * p.y + b.x * a.y - b.y * a.x) / len;
   }
   return err / points.length;
 }
 
-/** Detect line or circle from a freehand stroke (with RDP pre-pass). */
-export function recognizeLineAndCircle(points) {
-  const pts = filterPoints(points, 2);
+const DOLLAR_N = 64;
+
+function pathLength(points) {
+  let len = 0;
+  for (let i = 1; i < points.length; i += 1) {
+    len += distance(points[i - 1], points[i]);
+  }
+  return len;
+}
+
+function resample(points, n = DOLLAR_N) {
+  if (points.length < 2) return points.slice();
+  const I = pathLength(points) / (n - 1);
+  let D = 0;
+  const out = [points[0]];
+  let pts = points.slice();
+  for (let i = 1; i < pts.length; ) {
+    const d = distance(pts[i - 1], pts[i]);
+    if (D + d >= I) {
+      const t = (I - D) / d;
+      const q = {
+        x: pts[i - 1].x + t * (pts[i].x - pts[i - 1].x),
+        y: pts[i - 1].y + t * (pts[i].y - pts[i - 1].y),
+      };
+      out.push(q);
+      pts.splice(i, 0, q);
+      D = 0;
+    } else {
+      D += d;
+      i += 1;
+    }
+  }
+  while (out.length < n) out.push(pts[pts.length - 1]);
+  return out.slice(0, n);
+}
+
+function centroidDollar(points) {
+  let x = 0;
+  let y = 0;
+  for (const p of points) {
+    x += p.x;
+    y += p.y;
+  }
+  return { x: x / points.length, y: y / points.length };
+}
+
+function rotateBy(points, radians) {
+  const c = centroidDollar(points);
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  return points.map((p) => ({
+    x: (p.x - c.x) * cos - (p.y - c.y) * sin + c.x,
+    y: (p.x - c.x) * sin + (p.y - c.y) * cos + c.y,
+  }));
+}
+
+function indicativeAngle(points) {
+  const c = centroidDollar(points);
+  return Math.atan2(points[0].y - c.y, points[0].x - c.x);
+}
+
+function scaleTo(points, size) {
+  const box = boundingBox(points);
+  const scale = size / Math.max(box.width, box.height, 1);
+  const c = centroidDollar(points);
+  return points.map((p) => ({
+    x: (p.x - c.x) * scale,
+    y: (p.y - c.y) * scale,
+  }));
+}
+
+function translateTo(points, pt) {
+  const c = centroidDollar(points);
+  return points.map((p) => ({ x: p.x - c.x + pt.x, y: p.y - c.y + pt.y }));
+}
+
+function normalize(points) {
+  let pts = resample(points, DOLLAR_N);
+  const angle = indicativeAngle(pts);
+  pts = rotateBy(pts, -angle);
+  pts = scaleTo(pts, 250);
+  pts = translateTo(pts, { x: 0, y: 0 });
+  return pts;
+}
+
+function pathDistance(a, b) {
+  let d = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    d += distance(a[i], b[i]);
+  }
+  return d / a.length;
+}
+
+function makeCircleTemplate() {
+  const pts = [];
+  const r = 100;
+  for (let i = 0; i < DOLLAR_N; i += 1) {
+    const a = (i / DOLLAR_N) * Math.PI * 2;
+    pts.push({ x: r * Math.cos(a), y: r * Math.sin(a) });
+  }
+  return normalize(pts);
+}
+
+function makeLineTemplate() {
+  const pts = [];
+  for (let i = 0; i < DOLLAR_N; i += 1) {
+    pts.push({ x: i * (200 / (DOLLAR_N - 1)), y: 0 });
+  }
+  return normalize(pts);
+}
+
+const TEMPLATE_CIRCLE = makeCircleTemplate();
+const TEMPLATE_LINE = makeLineTemplate();
+const DOLLAR_THRESHOLD = 0.42;
+
+function recognizeDollar(points) {
+  const pts = filterPoints(points, 1.5);
+  if (pts.length < 8) return null;
+  const box = boundingBox(pts);
+  const diag = Math.hypot(box.width, box.height);
+  if (diag < 14) return null;
+
+  const norm = normalize(pts);
+  const start = pts[0];
+  const end = pts[pts.length - 1];
+  const closed = distance(start, end) < diag * 0.35;
+
+  const lineDist = pathDistance(norm, TEMPLATE_LINE);
+  const circleDist = pathDistance(norm, TEMPLATE_CIRCLE);
+
+  if (!closed && lineDist < DOLLAR_THRESHOLD) {
+    return { type: "line", from: start, to: end };
+  }
+  if (closed && circleDist < DOLLAR_THRESHOLD * 1.15) {
+    const center = centroid(pts);
+    const radius = avgRadius(pts, center);
+    if (radius >= 6) return { type: "circle", center, radius };
+  }
+  return null;
+}
+
+function recognizeGeometric(points) {
+  const pts = filterPoints(points, 1.5);
   if (pts.length < 4) return null;
 
   const box = boundingBox(pts);
   const diag = Math.hypot(box.width, box.height);
-  if (diag < 18) return null;
+  if (diag < 14) return null;
 
-  const simplified = rdp(pts, Math.max(2.5, diag * 0.022));
+  const simplified = rdp(pts, Math.max(2, diag * 0.018));
   const start = pts[0];
   const end = pts[pts.length - 1];
-  const closed = distance(start, end) < diag * 0.28;
+  const closed = distance(start, end) < diag * 0.32;
 
   const lineErr = lineError(pts, start, end);
-  if (!closed && (lineErr < diag * 0.09 || simplified.length <= 3)) {
+  if (!closed && (lineErr < diag * 0.11 || simplified.length <= 3)) {
     return { type: "line", from: start, to: end };
   }
 
@@ -110,23 +247,25 @@ export function recognizeLineAndCircle(points) {
 
   const center = centroid(pts);
   const rAvg = avgRadius(pts, center);
-  if (rAvg < 8) return null;
+  if (rAvg < 6) return null;
 
   let radialVar = 0;
-  for (const p of pts) {
-    radialVar += Math.abs(distance(p, center) - rAvg);
-  }
+  for (const p of pts) radialVar += Math.abs(distance(p, center) - rAvg);
   radialVar /= pts.length;
 
   const aspect = box.width / (box.height || 1);
-  if (aspect > 0.65 && aspect < 1.55 && radialVar < rAvg * 0.28) {
+  if (aspect > 0.55 && aspect < 1.8 && radialVar < rAvg * 0.32) {
     return { type: "circle", center, radius: rAvg };
   }
-
   return null;
 }
 
-export function smoothStroke(points, { streamline = 0.55 } = {}) {
+/** Detect line or circle from a freehand stroke. */
+export function recognizeLineAndCircle(points) {
+  return recognizeDollar(points) ?? recognizeGeometric(points);
+}
+
+export function smoothStroke(points, { streamline = 0.5 } = {}) {
   if (points.length < 3) return points.slice();
   const out = [points[0]];
   for (let i = 1; i < points.length; i += 1) {
