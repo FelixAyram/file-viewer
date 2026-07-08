@@ -1,7 +1,6 @@
 import { saveFile } from "./doc-store.js";
 import { renderPdf } from "./pdf-viewer.js";
 import { renderEbook } from "./ebook-viewer.js";
-import { showDocToolbar } from "./doc-toolbar.js";
 
 const supportedExtensions = {
   pdfjs: ["pdf"],
@@ -68,7 +67,6 @@ function clearError() {
 
 function prepareViewer() {
   document.getElementById("drop-area")?.remove();
-  showDocToolbar();
   return document.getElementById("viewer-container");
 }
 
@@ -201,10 +199,7 @@ export async function loadDocument(source, fileType, { name } = {}) {
       fileType = parseUrl(source).split(".").pop()?.toLowerCase();
     }
 
-    document.body.classList.toggle(
-      "pdf-viewer-active",
-      supportedExtensions.pdfjs.includes(fileType)
-    );
+    document.body.classList.remove("pdf-viewer-active");
 
     const file =
       source instanceof File || source instanceof ArrayBuffer

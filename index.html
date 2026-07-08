@@ -6,11 +6,30 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Visor web de PDF, cómics, ebooks y más — con dibujo suavizado">
   <link rel="stylesheet" href="./css/style.css">
-  <link rel="stylesheet" href="./vendor/pdfjs/web/viewer.css">
-  <link rel="stylesheet" href="./vendor/villain-style.css"></head>
+  <link rel="stylesheet" href="./vendor/villain-style.css">
+</head>
 <body>
+  <div id="draw-toolbar">
+    <button type="button" id="tool-pen" title="Activar dibujo (D)">✏️ Dibujar</button>
+    <span class="toolbar-sep"></span>
+    <label class="toggle on" id="toggle-smooth" title="Suaviza trazos erráticos del mouse">
+      <input type="checkbox" checked> Suavizado
+    </label>
+    <label class="toggle on" id="toggle-snap" title="Detecta círculos y rectángulos al mantener quieto o al soltar">
+      <input type="checkbox" checked> Formas
+    </label>
+    <span class="toolbar-sep"></span>
+    <input type="color" id="stroke-color" value="#ef4444" title="Color">
+    <input type="range" id="stroke-width" min="1" max="12" value="3" title="Grosor">
+    <span class="toolbar-sep"></span>
+    <button type="button" id="tool-undo" title="Deshacer (Ctrl+Z)">↩</button>
+    <button type="button" id="tool-redo" title="Rehacer (Ctrl+Y)">↪</button>
+    <button type="button" id="tool-clear" title="Borrar todo">🗑</button>
+  </div>
+
   <div id="shape-preview-hint"></div>
   <div id="draw-overlay"></div>
+
   <div id="loading-overlay" aria-live="polite" aria-busy="false">
     <div class="loading-card">
       <p class="loading-message">Procesando documento…</p>

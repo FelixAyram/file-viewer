@@ -1,13 +1,13 @@
 import { DrawLayer } from "./draw-layer.js";
 import { initDropZone, loadViewerByUrl, loadDocument, parseViewerHash } from "./viewer.js";
 import { loadFile } from "./doc-store.js";
-import { mountDocToolbar } from "./doc-toolbar.js";
 
 const drawLayer = new DrawLayer(
   document.getElementById("draw-overlay"),
+  document.getElementById("draw-toolbar"),
   document.getElementById("shape-preview-hint")
 );
-drawLayer.bindToolbar(mountDocToolbar());
+
 initDropZone(drawLayer);
 
 document.addEventListener("keydown", (e) => {

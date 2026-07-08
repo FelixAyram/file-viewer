@@ -1,21 +1,25 @@
 import {
   smoothStroke,
-  recognizeShape,
+  recognizeCircleOrRect,
   shapeToPoints,
 } from "./stroke-engine.js";
 
 const STORAGE_KEY = "file-viewer-strokes";
 
 export class DrawLayer {
-  constructor(overlayEl, hintEl) {
+  constructor(overlayEl, toolbarEl, hintEl) {
     this.overlay = overlayEl;
+    this.toolbar = toolbarEl;
     this.hint = hintEl;
     this.canvas = document.createElement("canvas");
     this.ctx = this.canvas.getContext("2d");
     this.overlay.appendChild(this.canvas);
 
-    this.toolbar = null;
     this.enabled = false;
+    this.smoothing = true;
+    this.shapeSnap = true;
+    this.color = "#ef4444";
+    this.width = 3;
     this.strokes = [];
     this.redoStack = [];
 
@@ -26,67 +30,50 @@ export class DrawLayer {
     this.lastMove = { x: 0, y: 0 };
     this.holdStillMs = 450;
 
-    this.color = "#facc15";
-    this.width = 3;
-    this.opacity = 1;
-
+    this._bindToolbar();
     this._bindCanvas();
     this._resize();
     window.addEventListener("resize", () => this._resize());
   }
 
-  bindToolbar(toolbarEl) {
-    this.toolbar = toolbarEl;
-    this._bindToolbar();
-  }
-
   _bindToolbar() {
-    if (!this.toolbar) return;
-
-    const penBtn = this.toolbar.querySelector("#editorInkButton");
-    const popover = this.toolbar.querySelector("#editorInkParamsToolbar");
-    const colorInput = this.toolbar.querySelector("#editorInkColor");
-    const widthInput = this.toolbar.querySelector("#editorInkThickness");
-    const opacityInput = this.toolbar.querySelector("#editorInkOpacity");
+    const penBtn = this.toolbar.querySelector("#tool-pen");
+    const smoothToggle = this.toolbar.querySelector("#toggle-smooth");
+    const snapToggle = this.toolbar.querySelector("#toggle-snap");
+    const colorInput = this.toolbar.querySelector("#stroke-color");
+    const widthInput = this.toolbar.querySelector("#stroke-width");
     const undoBtn = this.toolbar.querySelector("#tool-undo");
     const redoBtn = this.toolbar.querySelector("#tool-redo");
     const clearBtn = this.toolbar.querySelector("#tool-clear");
 
-    penBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      this.setEnabled(!this.enabled);
+    penBtn.addEventListener("click", () => this.setEnabled(!this.enabled));
+    smoothToggle.addEventListener("click", () => {
+      this.smoothing = !this.smoothing;
+      smoothToggle.classList.toggle("on", this.smoothing);
     });
-
-    popover.addEventListener("click", (e) => e.stopPropagation());
-
+    snapToggle.addEventListener("click", () => {
+      this.shapeSnap = !this.shapeSnap;
+      snapToggle.classList.toggle("on", this.shapeSnap);
+    });
     colorInput.addEventListener("input", (e) => {
       this.color = e.target.value;
     });
     widthInput.addEventListener("input", (e) => {
       this.width = Number(e.target.value);
     });
-    opacityInput.addEventListener("input", (e) => {
-      this.opacity = Number(e.target.value);
-    });
     undoBtn.addEventListener("click", () => this.undo());
     redoBtn.addEventListener("click", () => this.redo());
     clearBtn.addEventListener("click", () => this.clear());
+
+    smoothToggle.classList.add("on");
+    snapToggle.classList.add("on");
   }
 
   setEnabled(on) {
     this.enabled = on;
     this.overlay.classList.toggle("active", on);
-    const penBtn = this.toolbar?.querySelector("#editorInkButton");
-    const popover = this.toolbar?.querySelector("#editorInkParamsToolbar");
-    penBtn?.classList.toggle("toggled", on);
-    if (on) {
-      popover?.classList.remove("hidden");
-      penBtn?.setAttribute("aria-expanded", "true");
-    } else {
-      popover?.classList.add("hidden");
-      penBtn?.setAttribute("aria-expanded", "false");
-      this._cancelHold();
-    }
+    this.toolbar.querySelector("#tool-pen").classList.toggle("active", on);
+    if (!on) this._cancelHold();
   }
 
   _resize() {
@@ -99,13 +86,6 @@ export class DrawLayer {
     this.canvas.style.height = `${h}px`;
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.redraw();
-  }
-
-  _finalizeStroke(rawPoints) {
-    if (rawPoints.length > 2) {
-      return smoothStroke(rawPoints, { streamline: 0.62, smoothing: 0.65 });
-    }
-    return rawPoints;
   }
 
   _bindCanvas() {
@@ -127,7 +107,7 @@ export class DrawLayer {
       this.lastMove = pt;
       this._cancelHold();
 
-      if (this.currentRaw.length > 8) {
+      if (this.shapeSnap && this.currentRaw.length > 8) {
         this._scheduleHoldCheck();
       }
 
@@ -142,23 +122,36 @@ export class DrawLayer {
         this.overlay.releasePointerCapture(e.pointerId);
       } catch (_) {}
 
-      const raw = this.currentRaw.map(({ x, y }) => ({ x, y }));
-      if (raw.length < 2) {
+      let points = this.currentRaw.map(({ x, y }) => ({ x, y }));
+      if (points.length < 2) {
         this.currentRaw = [];
         this.previewShape = null;
         this.redraw();
         return;
       }
 
-      const shape = this.previewShape ?? recognizeShape(raw);
-      const points = shape ? shapeToPoints(shape) : this._finalizeStroke(raw);
+      let shapeType = null;
+
+      if (this.previewShape) {
+        points = shapeToPoints(this.previewShape);
+        shapeType = this.previewShape.type;
+      } else if (this.shapeSnap) {
+        const shape = recognizeCircleOrRect(points);
+        if (shape) {
+          points = shapeToPoints(shape);
+          shapeType = shape.type;
+        } else if (this.smoothing) {
+          points = smoothStroke(points, { streamline: 0.62, smoothing: 0.65 });
+        }
+      } else if (this.smoothing) {
+        points = smoothStroke(points, { streamline: 0.62, smoothing: 0.65 });
+      }
 
       this.strokes.push({
         points,
         color: this.color,
         width: this.width,
-        opacity: this.opacity,
-        shape: shape?.type ?? null,
+        shape: shapeType,
       });
       this.redoStack = [];
       this.currentRaw = [];
@@ -185,7 +178,7 @@ export class DrawLayer {
       );
       if (!still) return;
       const raw = this.currentRaw.map(({ x, y }) => ({ x, y }));
-      const shape = recognizeShape(raw);
+      const shape = recognizeCircleOrRect(raw);
       if (shape) {
         this.previewShape = shape;
         this._showHint(shape.type);
@@ -203,10 +196,8 @@ export class DrawLayer {
 
   _showHint(type) {
     const labels = {
-      line: "Línea — soltá para confirmar",
-      circle: "Círculo — soltá para confirmar",
-      ellipse: "Elipse — soltá para confirmar",
-      rectangle: "Rectángulo — soltá para confirmar",
+      circle: "Círculo detectado — soltá para confirmar",
+      rectangle: "Rectángulo detectado — soltá para confirmar",
     };
     this.hint.textContent = labels[type] || "Forma detectada — soltá para confirmar";
     this.hint.classList.add("visible");
@@ -224,14 +215,17 @@ export class DrawLayer {
     ctx.lineJoin = "round";
     ctx.strokeStyle = this.color;
     ctx.lineWidth = this.width;
-    ctx.globalAlpha = this.previewShape ? this.opacity * 0.55 : this.opacity * 0.9;
+    ctx.globalAlpha = this.previewShape ? 0.55 : 0.9;
 
-    const raw = this.currentRaw.map(({ x, y }) => ({ x, y }));
-    const points = this.previewShape
-      ? shapeToPoints(this.previewShape)
-      : raw.length > 2
-        ? smoothStroke(raw, { streamline: 0.62, smoothing: 0.65 })
-        : raw;
+    let points;
+    if (this.previewShape) {
+      points = shapeToPoints(this.previewShape);
+    } else {
+      points = this.currentRaw.map(({ x, y }) => ({ x, y }));
+      if (this.smoothing && points.length > 2) {
+        points = smoothStroke(points, { streamline: 0.62, smoothing: 0.65 });
+      }
+    }
 
     this._strokePath(ctx, points);
     ctx.restore();
@@ -256,7 +250,6 @@ export class DrawLayer {
       ctx.lineJoin = "round";
       ctx.strokeStyle = s.color;
       ctx.lineWidth = s.width;
-      ctx.globalAlpha = s.opacity ?? 1;
       this._strokePath(ctx, s.points);
       ctx.restore();
     }
