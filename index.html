@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Visor de archivos</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Visor web de PDF, cómics, ebooks y más — con dibujo suavizado">
+  <link rel="stylesheet" href="./css/style.css">
+  <link rel="stylesheet" href="./vendor/villain-style.css">
+</head>
+<body>
+  <div id="draw-toolbar">
+    <button type="button" id="tool-pen" title="Activar dibujo (D)">✏️ Dibujar</button>
+    <span class="toolbar-sep"></span>
+    <label class="toggle on" id="toggle-smooth" title="Suaviza trazos erráticos del mouse">
+      <input type="checkbox" checked> Suavizado
+    </label>
+    <label class="toggle on" id="toggle-snap" title="Mantené el click quieto tras dibujar para convertir a forma">
+      <input type="checkbox" checked> Formas
+    </label>
+    <span class="toolbar-sep"></span>
+    <input type="color" id="stroke-color" value="#ef4444" title="Color">
+    <input type="range" id="stroke-width" min="1" max="12" value="3" title="Grosor">
+    <span class="toolbar-sep"></span>
+    <button type="button" id="tool-undo" title="Deshacer (Ctrl+Z)">↩</button>
+    <button type="button" id="tool-redo" title="Rehacer (Ctrl+Y)">↪</button>
+    <button type="button" id="tool-clear" title="Borrar todo">🗑</button>
+  </div>
+
+  <div id="shape-preview-hint"></div>
+  <div id="draw-overlay"></div>
+
+  <div id="error-popup">
+    <div class="card">
+      <div style="font-weight:600;margin-bottom:0.75rem">Error al abrir el archivo</div>
+      <p style="margin:0;font-size:0.9rem;line-height:1.4">
+        Puede haber un problema con este archivo. Probá abrirlo en otra aplicación.
+      </p>
+      <p id="error-message"></p>
+      <button type="button" onclick="document.getElementById('error-popup').classList.remove('visible')" style="margin-top:1rem;padding:6px 12px;border-radius:6px;border:0;cursor:pointer">Cerrar</button>
+    </div>
+  </div>
+
+  <div id="viewer-container">
+    <div id="drop-area">
+      <div>Arrastrá un archivo acá (o hacé click)</div>
+      <div class="hint">PDF, EPUB, FB2, MOBI, AZW3, DJVU, CBZ, CBR, RAR, ZIP</div>
+      <input type="file" id="file-upload" class="hidden" accept=".pdf,.epub,.fb2,.mobi,.azw3,.djvu,.cbz,.cbr,.rar,.zip" hidden>
+    </div>
+  </div>
+
+  <script src="./vendor/react.production.min.js"></script>
+  <script src="./vendor/react-dom.production.min.js"></script>
+  <script src="./vendor/reakit.min.js"></script>
+  <script src="./vendor/djvu.js"></script>
+  <script src="./vendor/djvu_viewer.js"></script>
+  <script src="./vendor/villain.js"></script>
+  <script src="./vendor/zip.min.js"></script>
+  <script type="module" src="./js/main.js"></script>
+</body>
+</html>

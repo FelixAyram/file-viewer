@@ -1,0 +1,186 @@
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: #111;
+  color: #eee;
+}
+
+#viewer-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.viewer-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+#drop-area {
+  padding: 4rem;
+  margin: 1rem;
+  cursor: pointer;
+  border: 2px dashed #555;
+  border-radius: 12px;
+  text-align: center;
+  background: #1a1a1a;
+  transition: background 0.15s;
+}
+
+#drop-area:hover, #drop-area.drag-over {
+  background: #252525;
+}
+
+#drop-area .hint {
+  color: #888;
+  font-size: 0.875rem;
+  margin-top: 0.5rem;
+}
+
+#error-popup {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(6px);
+  background: rgba(0,0,0,0.45);
+  z-index: 200;
+}
+
+#error-popup.visible { display: flex; }
+
+#error-popup .card {
+  background: #f5f5f5;
+  color: #111;
+  border: 1px solid #ccc;
+  padding: 1.5rem;
+  border-radius: 10px;
+  max-width: 24rem;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+}
+
+#error-message {
+  font-family: ui-monospace, monospace;
+  font-size: 0.75rem;
+  color: #666;
+  margin-top: 0.5rem;
+  overflow: auto;
+}
+
+/* Drawing overlay */
+#draw-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 50;
+}
+
+#draw-overlay.active {
+  pointer-events: auto;
+  cursor: crosshair;
+}
+
+#draw-overlay canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+#draw-toolbar {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 100;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 8px 10px;
+  background: rgba(30, 30, 30, 0.92);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 10px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  backdrop-filter: blur(8px);
+  max-width: calc(100vw - 24px);
+}
+
+#draw-toolbar button,
+#draw-toolbar label.toggle {
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  background: rgba(255,255,255,0.08);
+  color: #eee;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+}
+
+#draw-toolbar button:hover,
+#draw-toolbar label.toggle:hover {
+  background: rgba(255,255,255,0.14);
+}
+
+#draw-toolbar button.active {
+  background: #3b82f6;
+  color: #fff;
+}
+
+#draw-toolbar label.toggle input { display: none; }
+
+#draw-toolbar label.toggle.on {
+  background: #16a34a;
+  color: #fff;
+}
+
+#draw-toolbar input[type="color"] {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 2px solid rgba(255,255,255,0.2);
+  border-radius: 4px;
+  cursor: pointer;
+  background: transparent;
+}
+
+#draw-toolbar input[type="range"] {
+  width: 72px;
+  accent-color: #3b82f6;
+}
+
+.toolbar-sep {
+  width: 1px;
+  height: 24px;
+  background: rgba(255,255,255,0.15);
+  margin: 0 2px;
+}
+
+#shape-preview-hint {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 101;
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: rgba(22, 163, 74, 0.92);
+  color: #fff;
+  font-size: 13px;
+  display: none;
+  pointer-events: none;
+}
+
+#shape-preview-hint.visible { display: block; }
+
+.villain { min-height: 100vh !important; }
